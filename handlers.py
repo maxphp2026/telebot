@@ -11,6 +11,7 @@ class AdminState(StatesGroup):
     add_outline = State()
     add_v2ray = State()
     add_ehi = State()
+    delete_key = State()
     add_credits_uid = State()
     add_credits_amt = State()
     deduct_credits_uid = State()
@@ -54,21 +55,24 @@ def admin_keyboard():
         ],
         [
             InlineKeyboardButton(text="➕ EHI Keys", callback_data="admin_add_ehi"),
-            InlineKeyboardButton(text="🔍 View User", callback_data="admin_view_user")
+            InlineKeyboardButton(text="🗑 Delete Key", callback_data="admin_delete_key")
         ],
         [
-            InlineKeyboardButton(text="💰 Add Credits", callback_data="admin_add_credits"),
-            InlineKeyboardButton(text="➖ Deduct Credits", callback_data="admin_deduct_credits")
+            InlineKeyboardButton(text="🔍 View User", callback_data="admin_view_user"),
+            InlineKeyboardButton(text="💰 Add Credits", callback_data="admin_add_credits")
         ],
         [
-            InlineKeyboardButton(text="🚫 Ban User", callback_data="admin_ban"),
-            InlineKeyboardButton(text="✅ Unban User", callback_data="admin_unban")
+            InlineKeyboardButton(text="➖ Deduct Credits", callback_data="admin_deduct_credits"),
+            InlineKeyboardButton(text="🚫 Ban User", callback_data="admin_ban")
         ],
         [
-            InlineKeyboardButton(text="📋 Pending", callback_data="admin_pending"),
-            InlineKeyboardButton(text="📊 Stats", callback_data="admin_stats")
+            InlineKeyboardButton(text="✅ Unban User", callback_data="admin_unban"),
+            InlineKeyboardButton(text="📋 Pending", callback_data="admin_pending")
         ],
-        [InlineKeyboardButton(text="📢 Broadcast", callback_data="admin_broadcast")]
+        [
+            InlineKeyboardButton(text="📊 Stats", callback_data="admin_stats"),
+            InlineKeyboardButton(text="📢 Broadcast", callback_data="admin_broadcast")
+        ]
     ])
 
 def back_kb():
@@ -679,6 +683,73 @@ async def admin_unban_uid(message: Message, state: FSMContext):
     except:
         pass
 
+# --- Delete User-Issued Key ---
+async def cb_admin_delete_key(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+    await callback.message.edit_text(
+        "🗑 <b>Key ဖျက်မည်</b>\n\nဖျက်လိုသော Key ကို အပြည့်အစုံ paste လုပ်ပါ-\n"
+        "(User ထံ ထွက်သွားပြီးသော key အတိအကျ ဖြစ်ရမည်)",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminState.delete_key)
+
+async def admin_delete_key_text(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    await state.clear()
+    key_text = message.text.strip()
+    success, record = delete_user_key_by_text(key_text)
+    if success:
+        icon = "🔵" if record["key_type"] == "Outline" else ("🟣" if record["key_type"] == "V2RAY" else "📡")
+        await message.answer(
+            f"✅ <b>Key ဖျက်ပြီ!</b>\n\n"
+            f"{icon} Type: {record['key_type']}\n"
+            f"👤 User ID: <code>{record['user_id']}</code>",
+            reply_markup=admin_keyboard(), parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            "❌ ဒီ Key ကို database မှာ မတွေ့ပါ! Key text အတိအကျ ပြန်စစ်ပါ။",
+            reply_markup=admin_keyboard()
+        )
+
+# --- /addkey command (quick add) ---
+async def cmd_addkey(message: Message):
+    """Usage: /addkey outline <key>  or  /addkey v2ray <key>  or  /addkey ehi <key>"""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "📝 <b>Usage:</b>\n"
+            "<code>/addkey outline ss://xxxxx</code>\n"
+            "<code>/addkey v2ray vless://xxxxx</code>\n"
+            "<code>/addkey ehi xxxxx</code>",
+            parse_mode="HTML"
+        )
+        return
+    key_type = parts[1].lower()
+    key_value = parts[2].strip()
+
+    if key_type == "outline":
+        ok = add_outline_key(key_value)
+        label = "Outline"
+    elif key_type == "v2ray":
+        ok = add_v2ray_key(key_value)
+        label = "V2RAY"
+    elif key_type == "ehi":
+        ok = add_ehi_key(key_value)
+        label = "HTTP Injector"
+    else:
+        await message.answer("❌ Key type မှားနေသည်! outline / v2ray / ehi သုံးပါ")
+        return
+
+    if ok:
+        await message.answer(f"✅ {label} Key 1 ခု ထည့်ပြီ!\n<code>{key_value}</code>", parse_mode="HTML")
+    else:
+        await message.answer("❌ Key ထည့်ရာတွင် error ဖြစ်သည်!")
+
 # --- Stats ---
 async def cb_admin_stats(callback: CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
@@ -787,6 +858,7 @@ async def admin_broadcast_msg(message: Message, state: FSMContext):
 def register_handlers(dp: Dispatcher):
     dp.message.register(cmd_start, CommandStart())
     dp.message.register(cmd_admin, Command("admin"))
+    dp.message.register(cmd_addkey, Command("addkey"))
 
     dp.callback_query.register(cb_check_joined, F.data == "check_joined")
     dp.callback_query.register(cb_back_main, F.data == "back_main")
@@ -810,6 +882,7 @@ def register_handlers(dp: Dispatcher):
     dp.message.register(admin_deduct_amt, AdminState.deduct_credits_amt)
     dp.message.register(admin_ban_uid, AdminState.ban_uid)
     dp.message.register(admin_unban_uid, AdminState.unban_uid)
+    dp.message.register(admin_delete_key_text, AdminState.delete_key)
     dp.message.register(admin_view_user_uid, AdminState.view_user_uid)
     dp.message.register(admin_broadcast_msg, AdminState.broadcast)
 
@@ -818,6 +891,7 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(cb_admin_add_outline, F.data == "admin_add_outline")
     dp.callback_query.register(cb_admin_add_v2ray, F.data == "admin_add_v2ray")
     dp.callback_query.register(cb_admin_add_ehi, F.data == "admin_add_ehi")
+    dp.callback_query.register(cb_admin_delete_key, F.data == "admin_delete_key")
     dp.callback_query.register(cb_admin_add_credits, F.data == "admin_add_credits")
     dp.callback_query.register(cb_admin_deduct_credits, F.data == "admin_deduct_credits")
     dp.callback_query.register(cb_admin_view_user, F.data == "admin_view_user")
